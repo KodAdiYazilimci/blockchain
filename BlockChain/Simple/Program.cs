@@ -28,6 +28,8 @@ class Program
         block1 = MineBlock(blockchain.Difficulty, block1);
         blockchain.Chain.Add(block1);
 
+        blockchain.Difficulty++;
+
         Block block2 = GenerateBlock(blockchain);
         block2.Transactions = new List<string>() { "Transaction 0" };
         block2.SmartContracts.Add(new SmartContract()
@@ -41,8 +43,10 @@ class Program
                 { "Amount", 100 }
             }
         });
-        block2 = MineBlock(blockchain.Difficulty + 1, block2);
+        block2 = MineBlock(blockchain.Difficulty, block2);
         blockchain.Chain.Add(block2);
+
+        blockchain.Difficulty++;
 
         blockchain.PendingTransactions.Add(new Simple.Transaction()
         {
