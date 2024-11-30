@@ -66,10 +66,60 @@ class Program
         bool isChainValid = IsChainValid(blockchain);
         Console.WriteLine(isChainValid);
 
+        string merkleRoot = CalculateMerkleRoot(blockchain.PendingTransactions.Select(x => $"{x.FromAddress}-{x.ToAddress}-{x.Amount}-{x.TransactionHash}").ToList());
+
         ProcessPendingTransactions(blockchain, "Miner");
 
         isChainValid = IsChainValid(blockchain);
         Console.WriteLine(isChainValid);
+    }
+
+    static string CalculateMerkleRoot(List<string> transactions)
+    {
+        if (transactions.Count == 0)
+            return string.Empty;
+
+        // İşlemleri SHA-256 hash'leri ile başlat
+        List<string> currentLevel = new List<string>();
+        foreach (var transaction in transactions)
+        {
+            currentLevel.Add(ComputeSha256Hash(transaction));
+        }
+
+        // Merkle Ağacı hesaplama
+        while (currentLevel.Count > 1)
+        {
+            List<string> nextLevel = new List<string>();
+
+            for (int i = 0; i < currentLevel.Count; i += 2)
+            {
+                // Eğer tek sayıda hash varsa, son hash'i çiftlemek için kendisini tekrar ekle
+                string left = currentLevel[i];
+                string right = (i + 1 < currentLevel.Count) ? currentLevel[i + 1] : left;
+
+                // İki hash'i birleştirip yeni bir hash oluştur
+                nextLevel.Add(ComputeSha256Hash(left + right));
+            }
+
+            currentLevel = nextLevel;
+        }
+
+        // Kök hash (Merkle Root) döndürülür
+        return currentLevel[0];
+    }
+
+    static string ComputeSha256Hash(string rawData)
+    {
+        using (SHA256 sha256 = SHA256.Create())
+        {
+            byte[] bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(rawData));
+            StringBuilder builder = new StringBuilder();
+            foreach (byte b in bytes)
+            {
+                builder.Append(b.ToString("x2"));
+            }
+            return builder.ToString();
+        }
     }
 
     private static Block GenerateBlock(Blockchain blockchain)
