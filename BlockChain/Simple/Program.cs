@@ -2,6 +2,8 @@
 
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 class Program
 {
@@ -13,6 +15,7 @@ class Program
         blockchain.Wallets.Add("Sample Recipent", 0);
 
         Block block1 = GenerateBlock(blockchain);
+        block1.Data = "{}";
         block1.Transactions = new List<string>() { "Init Transaction" };
         block1.SmartContracts.Add(new SmartContract()
         {
@@ -31,6 +34,7 @@ class Program
         blockchain.Difficulty++;
 
         Block block2 = GenerateBlock(blockchain);
+        block2.Data = "{}";
         block2.Transactions = new List<string>() { "Transaction 0" };
         block2.SmartContracts.Add(new SmartContract()
         {
@@ -66,46 +70,99 @@ class Program
         bool isChainValid = IsChainValid(blockchain);
         Console.WriteLine(isChainValid);
 
-        string merkleRoot = CalculateMerkleRoot(blockchain.PendingTransactions.Select(x => $"{x.FromAddress}-{x.ToAddress}-{x.Amount}-{x.TransactionHash}").ToList());
-
         ProcessPendingTransactions(blockchain, "Miner");
+
+        var hashedTransactions = blockchain.PendingTransactions.Select(x => $"{x.TransactionHash}").ToList();
+
+        string merkleRoot = ComputeMerkleRoot(hashedTransactions);
+
+        var firstTransaction = blockchain.PendingTransactions.FirstOrDefault();
+
+        string targetTransaction = $"{firstTransaction.TransactionHash}";
+        List<string> merklePath = GenerateMerklePath(blockchain.PendingTransactions.Select(x => $"{x.TransactionHash}").ToList(), targetTransaction);
+
+        bool isValid = VerifyMerkleProof(targetTransaction, merklePath, merkleRoot);
+
+        blockchain.PendingTransactions.Clear();
 
         isChainValid = IsChainValid(blockchain);
         Console.WriteLine(isChainValid);
     }
 
-    static string CalculateMerkleRoot(List<string> transactions)
+    public static bool VerifyMerkleProof(string transactionHash, List<string> merklePath, string merkleRoot)
     {
-        if (transactions.Count == 0)
-            return string.Empty;
+        string computedHash = transactionHash;
 
-        // İşlemleri SHA-256 hash'leri ile başlat
-        List<string> currentLevel = new List<string>();
-        foreach (var transaction in transactions)
+        foreach (var hash in merklePath)
         {
-            currentLevel.Add(ComputeSha256Hash(transaction));
+            computedHash = computedHash.CompareTo(hash) < 0
+                ? ComputeSha256Hash(computedHash + hash)
+                : ComputeSha256Hash(hash + computedHash);
         }
 
-        // Merkle Ağacı hesaplama
-        while (currentLevel.Count > 1)
+        return computedHash == merkleRoot;
+    }
+
+    public static string ComputeMerkleRoot(List<string> transactionHashes)
+    {
+        if (transactionHashes == null || transactionHashes.Count == 0)
+            throw new ArgumentException("İşlem listesi boş olamaz!");
+
+        // Eğer tek bir işlem varsa, hash'i doğrudan döndür
+        if (transactionHashes.Count == 1)
+            return transactionHashes[0];
+
+        // Her seviyede çift hash yapmak için işlem sayısını eşit hale getir
+        while (transactionHashes.Count % 2 != 0)
         {
-            List<string> nextLevel = new List<string>();
+            transactionHashes.Add(transactionHashes.Last());
+        }
 
-            for (int i = 0; i < currentLevel.Count; i += 2)
+        List<string> newLevel = new List<string>();
+
+        // Mevcut seviyedeki hash'leri birleştirerek yeni bir üst seviye oluştur
+        for (int i = 0; i < transactionHashes.Count; i += 2)
+        {
+            string combinedHash = ComputeSha256Hash(transactionHashes[i] + transactionHashes[i + 1]);
+            newLevel.Add(combinedHash);
+        }
+
+        // Yeniden hesaplama için üst seviyeyi recursive olarak gönder
+        return ComputeMerkleRoot(newLevel);
+    }
+
+    public static List<string> GenerateMerklePath(List<string> transactionHashes, string targetHash)
+    {
+        if (!transactionHashes.Contains(targetHash))
+            throw new ArgumentException("Hedef hash işlem listesinde bulunamadı!");
+
+        List<string> merklePath = new List<string>();
+
+        while (transactionHashes.Count > 1)
+        {
+            while (transactionHashes.Count % 2 != 0)
             {
-                // Eğer tek sayıda hash varsa, son hash'i çiftlemek için kendisini tekrar ekle
-                string left = currentLevel[i];
-                string right = (i + 1 < currentLevel.Count) ? currentLevel[i + 1] : left;
-
-                // İki hash'i birleştirip yeni bir hash oluştur
-                nextLevel.Add(ComputeSha256Hash(left + right));
+                transactionHashes.Add(transactionHashes[^1]); // Son hash'i çift yapmak için ekle
             }
 
-            currentLevel = nextLevel;
+            List<string> newLevel = new List<string>();
+
+            for (int i = 0; i < transactionHashes.Count; i += 2)
+            {
+                if (transactionHashes[i] == targetHash || transactionHashes[i + 1] == targetHash)
+                {
+                    merklePath.Add(transactionHashes[i] == targetHash ? transactionHashes[i + 1] : transactionHashes[i]);
+                    targetHash = ComputeSha256Hash(transactionHashes[i] + transactionHashes[i + 1]);
+                }
+
+                string combinedHash = ComputeSha256Hash(transactionHashes[i] + transactionHashes[i + 1]);
+                newLevel.Add(combinedHash);
+            }
+
+            transactionHashes = newLevel;
         }
 
-        // Kök hash (Merkle Root) döndürülür
-        return currentLevel[0];
+        return merklePath;
     }
 
     static string ComputeSha256Hash(string rawData)
@@ -138,21 +195,28 @@ class Program
         foreach (var transaction in blockchain.PendingTransactions)
         {
             blockchain.Wallets[transaction.FromAddress] -= transaction.Amount;
+
             if (!blockchain.Wallets.ContainsKey(transaction.ToAddress))
             {
                 blockchain.Wallets[transaction.ToAddress] = 0;
             }
+
             blockchain.Wallets[transaction.ToAddress] += transaction.Amount;
+
+            Block newBlock = GenerateBlock(blockchain);
+            newBlock.Data = JsonSerializer.Serialize(blockchain.Wallets);
+            newBlock = MineBlock(blockchain.Difficulty, newBlock);
+            blockchain.Chain.Add(newBlock);
 
             Console.WriteLine($"İşlem Başarıyla Gerçekleştirildi: {transaction.Amount} Coin {transaction.FromAddress} -> {transaction.ToAddress}");
         }
 
-        Block newBlock = GenerateBlock(blockchain);
-        newBlock.Data = "Yeni Blok";
-        newBlock = MineBlock(blockchain.Difficulty, newBlock);
-        blockchain.Chain.Add(newBlock);
         blockchain.Wallets[minerAddress] = blockchain.Wallets.ContainsKey(minerAddress) ? blockchain.Wallets[minerAddress] + 0.1m : 0.1m;
-        blockchain.PendingTransactions.Clear();
+
+        Block minerBlock = GenerateBlock(blockchain);
+        minerBlock.Data = JsonSerializer.Serialize(blockchain.Wallets);
+        minerBlock = MineBlock(blockchain.Difficulty, minerBlock);
+        blockchain.Chain.Add(minerBlock);
     }
 
     static string GenerateTransactionHash(string FromAddress, string ToAddress, decimal Amount)
