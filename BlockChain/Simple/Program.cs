@@ -3,7 +3,6 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 class Program
 {
@@ -11,12 +10,19 @@ class Program
     {
         Blockchain blockchain = new Blockchain();
         blockchain.Difficulty = 3;
-        blockchain.Wallets.Add("Sample Creator", 0);
-        blockchain.Wallets.Add("Sample Recipent", 0);
 
-        Block block1 = GenerateBlock(blockchain);
+
+        Wallet alice = new Wallet();
+        Wallet bob = new Wallet();
+        Wallet miner = new Wallet();
+
+        blockchain.Wallets.Add(alice);
+        blockchain.Wallets.Add(bob);
+        blockchain.Wallets.Add(miner);
+
+        Block block1 = GenerateBlock(blockchain, new List<Transaction>());
         block1.Data = "{}";
-        block1.Transactions = new List<string>() { "Init Transaction" };
+        block1.Transactions = new List<Transaction>() { };
         block1.SmartContracts.Add(new SmartContract()
         {
             Id = Guid.NewGuid().ToString(),
@@ -29,13 +35,13 @@ class Program
             }
         });
         block1 = MineBlock(blockchain.Difficulty, block1);
-        blockchain.Chain.Add(block1);
+        blockchain.Blocks.Add(block1);
 
-        blockchain.Difficulty++;
+        //blockchain.Difficulty++;
 
-        Block block2 = GenerateBlock(blockchain);
+        Block block2 = GenerateBlock(blockchain, new List<Transaction>());
         block2.Data = "{}";
-        block2.Transactions = new List<string>() { "Transaction 0" };
+        block2.Transactions = new List<Transaction>() { };
         block2.SmartContracts.Add(new SmartContract()
         {
             Id = Guid.NewGuid().ToString(),
@@ -48,45 +54,112 @@ class Program
             }
         });
         block2 = MineBlock(blockchain.Difficulty, block2);
-        blockchain.Chain.Add(block2);
+        blockchain.Blocks.Add(block2);
 
-        blockchain.Difficulty++;
+        //blockchain.Difficulty++;
 
         blockchain.PendingTransactions.Add(new Simple.Transaction()
         {
-            FromAddress = "Sample Creator",
-            ToAddress = "Sample Recipent",
+            SenderPublicKey = bob.PublicKey,
+            ReceiverPublicKey = alice.PublicKey,
             Amount = 50,
-            TransactionHash = GenerateTransactionHash("Sample Creator", "Sample Recipent", 50)
+            TransactionHash = GenerateTransactionHash(bob.PublicKey, alice.PublicKey, 50)
         });
         blockchain.PendingTransactions.Add(new Simple.Transaction()
         {
-            FromAddress = "Sample Creator",
-            ToAddress = "Sample Recipent",
+            SenderPublicKey = alice.PublicKey,
+            ReceiverPublicKey = bob.PublicKey,
             Amount = 100,
-            TransactionHash = GenerateTransactionHash("Sample Creator", "Sample Recipent", 100)
+            TransactionHash = GenerateTransactionHash(alice.PublicKey, bob.PublicKey, 100)
         });
 
         bool isChainValid = IsChainValid(blockchain);
         Console.WriteLine(isChainValid);
 
-        ProcessPendingTransactions(blockchain, "Miner");
+        ProcessPendingTransactions(blockchain, miner.PublicKey);
 
         var hashedTransactions = blockchain.PendingTransactions.Select(x => $"{x.TransactionHash}").ToList();
 
         string merkleRoot = ComputeMerkleRoot(hashedTransactions);
 
         var firstTransaction = blockchain.PendingTransactions.FirstOrDefault();
-
         string targetTransaction = $"{firstTransaction.TransactionHash}";
         List<string> merklePath = GenerateMerklePath(blockchain.PendingTransactions.Select(x => $"{x.TransactionHash}").ToList(), targetTransaction);
-
         bool isValid = VerifyMerkleProof(targetTransaction, merklePath, merkleRoot);
 
         blockchain.PendingTransactions.Clear();
 
         isChainValid = IsChainValid(blockchain);
         Console.WriteLine(isChainValid);
+
+        string transactionData = $"{alice.PublicKey}{bob.PublicKey}{100.0m}";
+        string signature = alice.SignData(transactionData);
+        Transaction transaction = new Transaction(alice.PublicKey, bob.PublicKey, 100.0m, signature);
+        if (!IsTransactionValid(transaction.SenderPublicKey, transaction.ReceiverPublicKey, transaction.Signature, transaction.Amount))
+        {
+            throw new InvalidOperationException("Geçersiz işlem!");
+        }
+        blockchain.PendingTransactions.Add(transaction);
+        ProcessPendingTransactions(blockchain, miner.PublicKey);
+        blockchain.PendingTransactions.Clear();
+
+        decimal amount = GetBalance(blockchain, bob.PublicKey);
+    }
+
+    static bool IsTransactionValid(string SenderPublicKey, string ReceiverPublicKey, string Signature, decimal Amount)
+    {
+        if (string.IsNullOrEmpty(SenderPublicKey)) return true; // Sistem işlemleri (madenci ödülü) geçerli kabul edilir.
+
+        string data = $"{SenderPublicKey}{ReceiverPublicKey}{Amount}";
+        return Wallet.VerifySignature(data, Signature, SenderPublicKey);
+    }
+
+    static decimal GetBalance(Blockchain blockchain, string publicKey)
+    {
+        decimal balance = 0.0m;
+
+        foreach (var block in blockchain.Blocks)
+        {
+            foreach (var transaction in block.Transactions)
+            {
+                if (transaction.ReceiverPublicKey == publicKey)
+                {
+                    // Gelen bakiye
+                    balance += transaction.Amount;
+                }
+
+                if (transaction.SenderPublicKey == publicKey)
+                {
+                    // Giden bakiye
+                    balance -= transaction.Amount;
+                }
+            }
+        }
+
+        return balance;
+    }
+
+    public static string SignTransaction(RSAParameters privateKey, string data)
+    {
+        using (var rsa = new RSACryptoServiceProvider())
+        {
+            rsa.ImportParameters(privateKey);
+            byte[] dataBytes = Encoding.UTF8.GetBytes(data);
+            byte[] signatureBytes = rsa.SignData(dataBytes, CryptoConfig.MapNameToOID("SHA256"));
+            return Convert.ToBase64String(signatureBytes);
+        }
+    }
+
+    // İmza doğrulama (alıcılar için)
+    public static bool VerifySignature(string publicKey, string data, string signature)
+    {
+        using (var rsa = new RSACryptoServiceProvider())
+        {
+            rsa.ImportParameters(new RSAParameters { Modulus = Convert.FromBase64String(publicKey) });
+            byte[] dataBytes = Encoding.UTF8.GetBytes(data);
+            byte[] signatureBytes = Convert.FromBase64String(signature);
+            return rsa.VerifyData(dataBytes, CryptoConfig.MapNameToOID("SHA256"), signatureBytes);
+        }
     }
 
     public static bool VerifyMerkleProof(string transactionHash, List<string> merklePath, string merkleRoot)
@@ -179,13 +252,14 @@ class Program
         }
     }
 
-    private static Block GenerateBlock(Blockchain blockchain)
+    private static Block GenerateBlock(Blockchain blockchain, List<Transaction> transactions)
     {
         Block block1 = new Block();
-        block1.Nonce = (blockchain.Chain.LastOrDefault()?.Nonce ?? 0) + 1;
-        block1.Index = (blockchain.Chain.LastOrDefault()?.Index ?? -1) + 1;
-        block1.PreviousHash = blockchain.Chain.LastOrDefault()?.Hash ?? "0";
+        block1.Nonce = (blockchain.Blocks.LastOrDefault()?.Nonce ?? 0) + 1;
+        block1.Index = (blockchain.Blocks.LastOrDefault()?.Index ?? -1) + 1;
+        block1.PreviousHash = blockchain.Blocks.LastOrDefault()?.Hash ?? "0";
         block1.Timestamp = DateTime.UtcNow.ToString();
+        block1.Transactions = transactions;
         block1.Hash = CalculateHash(block1.Index, block1.PreviousHash, block1.Timestamp, block1.Transactions, block1.Nonce);
         return block1;
     }
@@ -194,29 +268,33 @@ class Program
     {
         foreach (var transaction in blockchain.PendingTransactions)
         {
-            blockchain.Wallets[transaction.FromAddress] -= transaction.Amount;
+            blockchain.Wallets.FirstOrDefault(x => x.PublicKey == transaction.SenderPublicKey).Amount -= transaction.Amount;
+            blockchain.Wallets.FirstOrDefault(x => x.PublicKey == transaction.ReceiverPublicKey).Amount += transaction.Amount;
 
-            if (!blockchain.Wallets.ContainsKey(transaction.ToAddress))
+            Block newBlock = GenerateBlock(blockchain, new List<Transaction>()
             {
-                blockchain.Wallets[transaction.ToAddress] = 0;
-            }
-
-            blockchain.Wallets[transaction.ToAddress] += transaction.Amount;
-
-            Block newBlock = GenerateBlock(blockchain);
+                new Transaction()
+                {
+                    Amount = transaction.Amount,
+                    ReceiverPublicKey = transaction.ReceiverPublicKey,
+                    Signature = transaction.Signature,
+                    SenderPublicKey = transaction.SenderPublicKey,
+                    TransactionHash = transaction.TransactionHash
+                }
+            });
             newBlock.Data = JsonSerializer.Serialize(blockchain.Wallets);
             newBlock = MineBlock(blockchain.Difficulty, newBlock);
-            blockchain.Chain.Add(newBlock);
+            blockchain.Blocks.Add(newBlock);
 
-            Console.WriteLine($"İşlem Başarıyla Gerçekleştirildi: {transaction.Amount} Coin {transaction.FromAddress} -> {transaction.ToAddress}");
+            Console.WriteLine($"İşlem Başarıyla Gerçekleştirildi: {transaction.Amount} Coin {transaction.SenderPublicKey} -> {transaction.ReceiverPublicKey}");
         }
 
-        blockchain.Wallets[minerAddress] = blockchain.Wallets.ContainsKey(minerAddress) ? blockchain.Wallets[minerAddress] + 0.1m : 0.1m;
+        blockchain.Wallets.FirstOrDefault(x => x.PublicKey == minerAddress).Amount += 0.1m;
 
-        Block minerBlock = GenerateBlock(blockchain);
+        Block minerBlock = GenerateBlock(blockchain, new List<Transaction>());
         minerBlock.Data = JsonSerializer.Serialize(blockchain.Wallets);
         minerBlock = MineBlock(blockchain.Difficulty, minerBlock);
-        blockchain.Chain.Add(minerBlock);
+        blockchain.Blocks.Add(minerBlock);
     }
 
     static string GenerateTransactionHash(string FromAddress, string ToAddress, decimal Amount)
@@ -247,22 +325,22 @@ class Program
         return block;
     }
 
-    static string CalculateHash(int Index, string PreviousHash, string Timestamp, List<string> Transactions, int Nonce)
+    static string CalculateHash(int Index, string PreviousHash, string Timestamp, List<Transaction> Transactions, int Nonce)
     {
-        string blockData = Index + PreviousHash + Timestamp + string.Join(",", Transactions) + Nonce;
+        string input = $"{Index}{PreviousHash}{Timestamp}{Nonce}{string.Join("", Transactions)}";
         using (SHA256 sha256 = SHA256.Create())
         {
-            byte[] hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(blockData));
+            byte[] hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(input));
             return BitConverter.ToString(hashBytes).Replace("-", "").ToLower();
         }
     }
 
     static bool IsChainValid(Blockchain blockchain)
     {
-        for (int i = 1; i < blockchain.Chain.Count; i++)
+        for (int i = 1; i < blockchain.Blocks.Count; i++)
         {
-            Block currentBlock = blockchain.Chain[i];
-            Block previousBlock = blockchain.Chain[i - 1];
+            Block currentBlock = blockchain.Blocks[i];
+            Block previousBlock = blockchain.Blocks[i - 1];
 
             if (currentBlock.Hash != CalculateHash(currentBlock.Index, currentBlock.PreviousHash, currentBlock.Timestamp, currentBlock.Transactions, currentBlock.Nonce))
                 return false;
