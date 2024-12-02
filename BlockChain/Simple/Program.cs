@@ -11,7 +11,6 @@ class Program
         Blockchain blockchain = new Blockchain();
         blockchain.Difficulty = 3;
 
-
         Wallet alice = new Wallet();
         Wallet bob = new Wallet();
         Wallet miner = new Wallet();
@@ -22,7 +21,6 @@ class Program
 
         Block block1 = GenerateBlock(blockchain, new List<Transaction>());
         block1.Data = "{}";
-        block1.Transactions = new List<Transaction>() { };
         block1.SmartContracts.Add(new SmartContract()
         {
             Id = Guid.NewGuid().ToString(),
@@ -41,7 +39,6 @@ class Program
 
         Block block2 = GenerateBlock(blockchain, new List<Transaction>());
         block2.Data = "{}";
-        block2.Transactions = new List<Transaction>() { };
         block2.SmartContracts.Add(new SmartContract()
         {
             Id = Guid.NewGuid().ToString(),
@@ -58,20 +55,35 @@ class Program
 
         //blockchain.Difficulty++;
 
-        blockchain.PendingTransactions.Add(new Simple.Transaction()
+        string transactionData = $"{bob.PublicKey}{alice.PublicKey}{50}";
+        string signature = bob.SignData(transactionData);
+        Transaction transaction = new Transaction(bob.PublicKey, alice.PublicKey, 50, signature);
+
+        if (IsTransactionValid(bob.PublicKey, alice.PublicKey, signature, 50))
         {
-            SenderPublicKey = bob.PublicKey,
-            ReceiverPublicKey = alice.PublicKey,
-            Amount = 50,
-            TransactionHash = GenerateTransactionHash(bob.PublicKey, alice.PublicKey, 50)
-        });
-        blockchain.PendingTransactions.Add(new Simple.Transaction()
+            blockchain.PendingTransactions.Add(new Simple.Transaction()
+            {
+                SenderPublicKey = bob.PublicKey,
+                ReceiverPublicKey = alice.PublicKey,
+                Amount = 50,
+                TransactionHash = GenerateTransactionHash(bob.PublicKey, alice.PublicKey, 50)
+            });
+        }
+
+        transactionData = $"{alice.PublicKey}{bob.PublicKey}{10}";
+        signature = alice.SignData(transactionData);
+        transaction = new Transaction(alice.PublicKey, bob.PublicKey, 10, signature);
+
+        if (IsTransactionValid(alice.PublicKey, bob.PublicKey, signature, 10))
         {
-            SenderPublicKey = alice.PublicKey,
-            ReceiverPublicKey = bob.PublicKey,
-            Amount = 100,
-            TransactionHash = GenerateTransactionHash(alice.PublicKey, bob.PublicKey, 100)
-        });
+            blockchain.PendingTransactions.Add(new Simple.Transaction()
+            {
+                SenderPublicKey = alice.PublicKey,
+                ReceiverPublicKey = bob.PublicKey,
+                Amount = 10,
+                TransactionHash = GenerateTransactionHash(alice.PublicKey, bob.PublicKey, 100)
+            });
+        }
 
         bool isChainValid = IsChainValid(blockchain);
         Console.WriteLine(isChainValid);
@@ -91,17 +103,6 @@ class Program
 
         isChainValid = IsChainValid(blockchain);
         Console.WriteLine(isChainValid);
-
-        string transactionData = $"{alice.PublicKey}{bob.PublicKey}{100.0m}";
-        string signature = alice.SignData(transactionData);
-        Transaction transaction = new Transaction(alice.PublicKey, bob.PublicKey, 100.0m, signature);
-        if (!IsTransactionValid(transaction.SenderPublicKey, transaction.ReceiverPublicKey, transaction.Signature, transaction.Amount))
-        {
-            throw new InvalidOperationException("Geçersiz işlem!");
-        }
-        blockchain.PendingTransactions.Add(transaction);
-        ProcessPendingTransactions(blockchain, miner.PublicKey);
-        blockchain.PendingTransactions.Clear();
 
         decimal amount = GetBalance(blockchain, bob.PublicKey);
     }
