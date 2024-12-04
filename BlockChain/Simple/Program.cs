@@ -1,11 +1,9 @@
-﻿using SharpCompress.Compressors.LZMA;
+﻿using Simple;
 
-using Simple;
-
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
 
 class Program
 {
@@ -117,26 +115,29 @@ class Program
 
     static byte[] Compress(string data)
     {
-        using (var output = new MemoryStream())
+        using (var memoryStream = new MemoryStream())
         {
-            var encoder = new LzmaStream(new LzmaEncoderProperties(), false, output);
-            using (var input = new MemoryStream(Encoding.UTF8.GetBytes(data)))
+            using (var archive = new ZipArchive(memoryStream, ZipArchiveMode.Create, true))
             {
-                input.CopyTo(encoder);
+                var entry = archive.CreateEntry("data", CompressionLevel.SmallestSize);
+                using (StreamWriter writer = new StreamWriter(entry.Open()))
+                    writer.Write(data);
             }
-            encoder.Close();
-            return output.ToArray();
+
+            return memoryStream.ToArray();
         }
     }
     static string Decompress(byte[] CompressedData)
     {
-        using (var input = new MemoryStream(CompressedData))
-        using (var output = new MemoryStream())
+        using (var memoryStream = new MemoryStream(CompressedData))
         {
-            var decoder = new LzmaStream(new byte[0],input);
-            decoder.CopyTo(output);
-            decoder.Close();
-            return Encoding.UTF8.GetString(output.ToArray());
+            using (var archive = new ZipArchive(memoryStream, ZipArchiveMode.Read, true))
+            {
+                var stream = archive.Entries[0].Open();
+
+                using (StreamReader reader = new StreamReader(stream))
+                    return reader.ReadToEnd();
+            }
         }
     }
 
@@ -154,7 +155,9 @@ class Program
 
         foreach (var block in blockchain.Blocks)
         {
-            foreach (var transaction in block.Transactions)
+            var decompressed = Decompress(block.CompressedData);
+
+            foreach (var transaction in JsonSerializer.Deserialize<List<Transaction>>(decompressed))
             {
                 if (transaction.ReceiverPublicKey == publicKey)
                 {
