@@ -1,8 +1,11 @@
-﻿using Simple;
+﻿using SharpCompress.Compressors.LZMA;
+
+using Simple;
 
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 
 class Program
 {
@@ -20,7 +23,6 @@ class Program
         blockchain.Wallets.Add(miner);
 
         Block block1 = GenerateBlock(blockchain, new List<Transaction>());
-        block1.Data = "{}";
         block1.SmartContracts.Add(new SmartContract()
         {
             Id = Guid.NewGuid().ToString(),
@@ -33,12 +35,12 @@ class Program
             }
         });
         block1 = MineBlock(blockchain.Difficulty, block1);
+        block1.CompressedData = Compress(SerializeTransactions(block1.Transactions));
         blockchain.Blocks.Add(block1);
 
         //blockchain.Difficulty++;
 
         Block block2 = GenerateBlock(blockchain, new List<Transaction>());
-        block2.Data = "{}";
         block2.SmartContracts.Add(new SmartContract()
         {
             Id = Guid.NewGuid().ToString(),
@@ -51,6 +53,7 @@ class Program
             }
         });
         block2 = MineBlock(blockchain.Difficulty, block2);
+        block2.CompressedData = Compress(SerializeTransactions(block2.Transactions));
         blockchain.Blocks.Add(block2);
 
         //blockchain.Difficulty++;
@@ -105,6 +108,36 @@ class Program
         Console.WriteLine(isChainValid);
 
         decimal amount = GetBalance(blockchain, bob.PublicKey);
+    }
+
+    static string SerializeTransactions(List<Transaction> transactions)
+    {
+        return JsonSerializer.Serialize(transactions);
+    }
+
+    static byte[] Compress(string data)
+    {
+        using (var output = new MemoryStream())
+        {
+            var encoder = new LzmaStream(new LzmaEncoderProperties(), false, output);
+            using (var input = new MemoryStream(Encoding.UTF8.GetBytes(data)))
+            {
+                input.CopyTo(encoder);
+            }
+            encoder.Close();
+            return output.ToArray();
+        }
+    }
+    static string Decompress(byte[] CompressedData)
+    {
+        using (var input = new MemoryStream(CompressedData))
+        using (var output = new MemoryStream())
+        {
+            var decoder = new LzmaStream(new byte[0],input);
+            decoder.CopyTo(output);
+            decoder.Close();
+            return Encoding.UTF8.GetString(output.ToArray());
+        }
     }
 
     static bool IsTransactionValid(string SenderPublicKey, string ReceiverPublicKey, string Signature, decimal Amount)
@@ -283,8 +316,8 @@ class Program
                     TransactionHash = transaction.TransactionHash
                 }
             });
-            newBlock.Data = JsonSerializer.Serialize(blockchain.Wallets);
             newBlock = MineBlock(blockchain.Difficulty, newBlock);
+            newBlock.CompressedData = Compress(SerializeTransactions(newBlock.Transactions));
             blockchain.Blocks.Add(newBlock);
 
             Console.WriteLine($"İşlem Başarıyla Gerçekleştirildi: {transaction.Amount} Coin {transaction.SenderPublicKey} -> {transaction.ReceiverPublicKey}");
@@ -293,8 +326,8 @@ class Program
         blockchain.Wallets.FirstOrDefault(x => x.PublicKey == minerAddress).Amount += 0.1m;
 
         Block minerBlock = GenerateBlock(blockchain, new List<Transaction>());
-        minerBlock.Data = JsonSerializer.Serialize(blockchain.Wallets);
         minerBlock = MineBlock(blockchain.Difficulty, minerBlock);
+        minerBlock.CompressedData = Compress(SerializeTransactions(minerBlock.Transactions));
         blockchain.Blocks.Add(minerBlock);
     }
 

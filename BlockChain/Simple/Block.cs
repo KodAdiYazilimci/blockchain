@@ -9,6 +9,6 @@
         public string Hash { get; set; }
         public int Nonce { get; set; }
         public List<SmartContract> SmartContracts { get; set; } = new List<SmartContract>();
-        public string Data { get; set; }
+        public byte[] CompressedData { get; set; }
     }
 }
